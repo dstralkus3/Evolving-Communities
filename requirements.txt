@@ -1,0 +1,17 @@
+# Core numerical and plotting libraries
+numpy>=1.20.0
+matplotlib>=3.4.0
+
+# For interfacing with R code (used in inference modules)
+rpy2>=3.4.0
+
+# --- R Dependencies ---
+# NOTE: These are NOT installed by pip but are required by the R environment
+#       that rpy2 connects to. You need to install these in R separately, e.g.,
+#       install.packages("Matrix")
+#       install.packages("devtools") # If not already installed
+#       devtools::install("./hbsm/hsbm_package") # Install local hsbm package
+#
+# - Matrix (CRAN package, usually installed with R or as dependency)
+# - hsbm (The custom R package located in ./hbsm/hsbm_package/)
+# - nett (Potentially needed by the hsbm R package - check its DESCRIPTION file) 

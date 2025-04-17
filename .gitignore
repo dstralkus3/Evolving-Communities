@@ -1,0 +1,33 @@
+# Python environments
+venv/
+env/
+*.env
+.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# R specific ignores
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# Common Large Files & Output
+*.pdf
+*.RData
+*.rds
+
+# Specific Directories to Ignore (Adjust if needed)
+hbsm/results/
+hbsm/.Rproj.user/
+# Add other large data dirs if they exist, e.g. hbsm/data/large_files/ 
