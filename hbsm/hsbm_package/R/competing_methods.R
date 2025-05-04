@@ -61,6 +61,8 @@ pisces = function(A, K, alpha = 0.1, niter = 50, tol = 1e-6,
   P = U
   Unew = vector("list", nlayers+2)
   V = vector("list", nlayers)
+  V_history = list()
+
   for (itr in 1:niter) {
     for (t in 2:(nlayers+1)) {
       # Unew[[t]] = spec_proj(P[[t]] + alpha*(U[[t-1]] + U[[t+1]]), K)
@@ -70,17 +72,15 @@ pisces = function(A, K, alpha = 0.1, niter = 50, tol = 1e-6,
     }
     Unew[[1]] = Unew[[nlayers+2]] = 0
     err = max( sapply(2:(nlayers+1), function(t) norm(U[[t]] - Unew[[t]])) )
+
+    V_history[[itr]] = lapply(V, identity)
+
     U = Unew
-    if (verb) nett::printf("%3.2e\n", err)
+    if (verb) nett::printf("Iter %d, Max Change: %3.2e\n", itr, err)
     if (err < tol) break
   }
-  if (shared_kmeans_init) {
-    zinit = sample(nrow(A[[1]]), K, F)
-    zh = lapply(1:nlayers, function(t) kmeans(V[[t]], K, centers = V[[t]][zinit, ], iter.max = 30)$cluster)
-  } else {
-    zh = lapply(1:nlayers, function(t) kmeans(V[[t]], K, nstart = 20)$cluster)
-  }
-  zh
+
+  V_history
 }
 
 # get_agg_nmi(pisces(A, 3, shared_kmeans_init = F),zb)

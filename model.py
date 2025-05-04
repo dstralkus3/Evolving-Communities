@@ -2,8 +2,9 @@ import numpy as np
 import random
 from utils import sbm, evolve_communities_markov
 import matplotlib.pyplot as plt
-from inference.hbsm import run_hbsm_inference
+from inference.hiersbm import run_hbsm_inference
 from inference.dpsbm import run_dpsbm_inference
+from inference.pisces import run_pisces_inference
 
 class EvolvingCommunityModel:
 
@@ -33,7 +34,6 @@ class EvolvingCommunityModel:
         self.learned_trajectories = None # (n_nodes, n_layers, iters)
         self.learned_community_matrix = None # (n_nodes, n_nodes)
         self.inference_method = None # str
-
          
     def generate_markov_network(self, transition_matrix: np.ndarray):
         """
@@ -75,16 +75,14 @@ class EvolvingCommunityModel:
         """
 
         if method == 'hbsm':
-            run_hbsm_inference(self, niter = num_iters)
+            kcap = self.num_communities + 5 # Example default
+            gcap = self.num_communities + 5 # Example default
+            run_hbsm_inference(self, niter=num_iters, Kcap=kcap, Gcap=gcap)
         elif method == 'dpsbm':
             run_dpsbm_inference(self, niter = num_iters)
-
         elif method == 'pisces':
-            pass
-
-        elif method == 'spectral':
-            pass 
-
+            run_pisces_inference(self, K=self.num_communities, niter=num_iters, verb = True)
+            
         else:
             raise ValueError(f"Method {method} not supported.")
         

@@ -110,34 +110,27 @@ class Visualizer():
 
 
 if __name__ == "__main__":
-    
-    rng = np.random.default_rng(seed=40)
+    rng = np.random.default_rng(seed=42)
 
-    ## PARAMETERS FOR EVOLVING COMMUNITY INSTANCE
-    n_nodes = 20
-    n_layers = 100
-    num_communities = 100  # Changed from 10 to match transition matrix dimensions
+    n_nodes = 100  
+    n_layers = 20
+    num_communities = 10 
+
+    ## PARAMETERS FOR MARKOV MODEL
     community_matrix = rng.normal(0, 1, (num_communities, num_communities))
     initial_distribution = rng.dirichlet(np.ones(num_communities), size = 1)[0]
+    transition_matrix = rng.dirichlet(np.ones(num_communities), size = num_communities)
 
-    # MARKOV NETWORK HYPERPARAMETERS
-    temperature = 100
-
-    # Make transition matrix diagonal heavy for smoother paths
-    transition_matrix = np.zeros((num_communities, num_communities))
-    for i in range(num_communities):
-        alpha = np.ones(num_communities)
-        alpha[i] = temperature
-        transition_matrix[i, :] = rng.dirichlet(alpha)
-
-    # INITIALIZE MODEL AND PERFORM INFERENCE #
+    ## INITIALIZE MODEL
     model = EvolvingCommunityModel(n_nodes, n_layers, num_communities, community_matrix, initial_distribution)
-    model.generate_markov_network(transition_matrix)
 
-    # METHOD HYPERPARAMETERS #
-    num_iters = 50
-    model.learn_community_dynamics('dpsbm', num_iters = num_iters)
-    
+    ## GENERATE NETWORKS
+    model.generate_markov_network(transition_matrix)
+    print("Running PISCES inference for testing...")
+
+    ## INFERENCE
+    model.learn_community_dynamics(method='pisces', num_iters=50)
+
     # VISUALIZE RESULTS #
     visualizer = Visualizer(model)
     visualizer.plot_true_community_evolution()
