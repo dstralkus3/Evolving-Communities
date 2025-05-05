@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from inference.hiersbm import run_hbsm_inference
 from inference.dpsbm import run_dpsbm_inference
 from inference.pisces import run_pisces_inference
+from typing import Optional
 
 class EvolvingCommunityModel:
 
@@ -29,59 +30,88 @@ class EvolvingCommunityModel:
         self.num_communities = num_communities
         self.community_matrix = community_matrix
         self.initial_distribution = initial_distribution
-        self.dynamicNetwork = None # Eventually (n_nodes, n_nodes, n_layers)
-        self.community_assignments = None # (n_nodes, n_layers)
-        self.learned_trajectories = None # (n_nodes, n_layers, iters)
-        self.learned_community_matrix = None # (n_nodes, n_nodes)
-        self.inference_method = None # str
+        self.dynamicNetwork = None
+        self.community_assignments = None 
+        self.learned_trajectories = None 
+        self.learned_community_matrix = None 
+        self.inference_method = None 
          
-    def generate_markov_network(self, transition_matrix: np.ndarray):
+    def generate_markov_network(self, transition_matrix: np.ndarray, seed: Optional[int] = None):
         """
         Generate a Markov network with the given transition matrix.
 
         transition_matrix: np.ndarray with shape (num_communities, num_communities)
             Transition matrix
+        seed : int, optional
+            Random seed for reproducible network generation.
         """
-        # Generate community assignments
-        next_assignment = np.random.choice(
+        # Initialize the random number generator for this method
+        rng = np.random.default_rng(seed)
+
+        # Generate initial community assignments using the local rng
+        next_assignment = rng.choice(
             self.num_communities,
             size=self.n_nodes,
             p=self.initial_distribution
         )
-        
+
         networks = []
         community_assignments = []
+        # Use a consistent seed for each step if a main seed is provided
+        step_seed = seed
         for i in range(self.n_layers):
-
-            network_i = sbm(self.n_nodes, self.community_matrix, next_assignment)
-            networks.append(network_i) 
+            # Generate SBM network for this layer using the step_seed
+            network_i = sbm(self.n_nodes, self.community_matrix, next_assignment, seed=step_seed)
+            networks.append(network_i)
             community_assignments.append(next_assignment)
-            next_assignment = evolve_communities_markov(next_assignment, transition_matrix)
+            # Evolve communities for the next layer using the step_seed
+            next_assignment = evolve_communities_markov(next_assignment, transition_matrix, seed=step_seed)
+            # Increment step_seed deterministically if a seed was given
+            if step_seed is not None:
+                step_seed += 1
 
         self.dynamicNetwork = np.stack(networks, axis=-1).astype(networks[0].dtype if networks else int)
         self.community_assignments = np.stack(community_assignments, axis=-1).astype(community_assignments[0].dtype if community_assignments else int)
 
-    def learn_community_dynamics(self, method: str, num_iters: int):
+    def learn_community_dynamics(self, method: str, **kwargs):
         """
             Learn the community dynamics using the specified method.
 
             method: str
-                Method to use for learning the community dynamics. 
+                Method to use for learning the community dynamics.
                 Methods supported:
                     - 'hbsm'
                     - 'dpsbm'
                     - 'pisces'
                     - 'spectral'
+            **kwargs: dict
+                Method-specific hyperparameters (e.g., niter, K, alpha, verb, etc.)
+                Commonly expected: 'niter' (number of iterations)
         """
+        print(f"  learn_community_dynamics called for method '{method}' with kwargs: {kwargs}")
 
         if method == 'hbsm':
-            kcap = self.num_communities + 5 # Example default
-            gcap = self.num_communities + 5 # Example default
-            run_hbsm_inference(self, niter=num_iters, Kcap=kcap, Gcap=gcap)
+            hbsm_kwargs = kwargs.copy()
+            hbsm_kwargs.setdefault('Kcap', self.num_communities + 5)
+            hbsm_kwargs.setdefault('Gcap', self.num_communities + 5)
+            print(f"  Calling run_hbsm_inference with: {hbsm_kwargs}")
+            run_hbsm_inference(self, **hbsm_kwargs)
         elif method == 'dpsbm':
-            run_dpsbm_inference(self, niter = num_iters)
+
+            run_dpsbm_inference(self, **kwargs)
         elif method == 'pisces':
-            run_pisces_inference(self, K=self.num_communities, niter=num_iters, verb = True)
+
+            if 'K' not in kwargs:
+                 print("Warning: 'K' not found in kwargs for PISCES, defaulting to self.num_communities")
+                 kwargs['K'] = self.num_communities
+
+            print(f"  Calling run_pisces_inference with: {kwargs}")
+            run_pisces_inference(self, **kwargs)
+
+        elif method == 'spectral':
+            print("  Spectral method not implemented yet.")
+            pass
+
         else:
             raise ValueError(f"Method {method} not supported.")
 

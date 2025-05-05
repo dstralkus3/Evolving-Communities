@@ -45,6 +45,8 @@ def run_dpsbm_inference(model, **kwargs):
     **kwargs : dict
         Hyperparameters for hsbm::fit_mult_dpsbm (e.g., niter, Zcap, gam0, verb).
     """
+    model.inference_method = 'dpsbm'
+
     if not RPY2_LOADED:
         print("Cannot run DP-SBM inference because rpy2 or R packages failed to load.")
         model.learned_trajectories = None

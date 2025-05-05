@@ -3,7 +3,7 @@ import random
 from typing import Optional
 
 
-def sbm(n_nodes: int, community_matrix: np.ndarray, assignments: np.ndarray):
+def sbm(n_nodes: int, community_matrix: np.ndarray, assignments: np.ndarray, seed: int):
     """
     Returns SBM sample with the given communities
 
@@ -11,10 +11,12 @@ def sbm(n_nodes: int, community_matrix: np.ndarray, assignments: np.ndarray):
     assignments: np.ndarray with shape (n_nodes,)
 
     """
+    rng = np.random.default_rng(seed=seed)
+
     network = np.zeros((n_nodes, n_nodes))
     for i in range(n_nodes):
         for j in range(i+1, n_nodes):
-            network[i,j] = random.random() < community_matrix[assignments[i],assignments[j]]
+            network[i,j] = rng.random() < community_matrix[assignments[i],assignments[j]]
 
     return network
 
@@ -83,4 +85,29 @@ def evolve_communities_markov(
     return next_communities
 
 
+def simple_rw_transition(m: int, dtype=float) -> np.ndarray:
+    """
+    Transition matrix for a 1‑D simple random walk with reflecting
+    boundaries on the state set {0,…,m‑1}.
 
+    Parameters
+    ----------
+    m : int
+        Number of integer states (m ≥ 2).
+    dtype : data‑type, optional
+        NumPy floating type for the matrix (default: float64).
+
+    Returns
+    -------
+    P : ndarray of shape (m, m)
+        Stochastic matrix whose (i,j) entry is P[X_{k+1}=j | X_k=i].
+    """
+    P = np.zeros((m, m), dtype=dtype)
+
+    idx = np.arange(1, m - 1)
+    P[idx, idx - 1] = 0.5
+    P[idx, idx + 1] = 0.5
+
+    P[0, 1]       = 1.0       
+    P[m - 1, m-2] = 1.0       
+    return P
