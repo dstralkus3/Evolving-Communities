@@ -82,10 +82,8 @@ class EvolvingCommunityModel:
             run_dpsbm_inference(self, niter = num_iters)
         elif method == 'pisces':
             run_pisces_inference(self, K=self.num_communities, niter=num_iters, verb = True)
-            
         else:
             raise ValueError(f"Method {method} not supported.")
-        
 
 if __name__ == "__main__":
 
