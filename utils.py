@@ -111,3 +111,10 @@ def simple_rw_transition(m: int, dtype=float) -> np.ndarray:
     P[0, 1]       = 1.0       
     P[m - 1, m-2] = 1.0       
     return P
+
+def locality_sbm(m,beta=1.0):
+    """Return the m×m connection‑probability matrix described above."""
+    idx = np.arange(m)
+    dist = np.abs(idx[:, None] - idx[None, :])          
+    P = np.exp(-beta * dist)
+    return P

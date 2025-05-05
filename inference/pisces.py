@@ -23,11 +23,11 @@ except ImportError:
 RPY2_LOADED = False
 R_Matrix = None
 R_RSpectra = None
-R_nett = None # Assumes 'nett' package is installed or functions are sourced
-R_competing_methods = None # Will likely need to source this R file
+R_nett = None 
+R_competing_methods = None 
 R_robjects = None
 R_numpy2ri = None
-R_base = None # For sourcing
+R_base = None 
 
 try:
     import rpy2.robjects as robjects
@@ -142,8 +142,16 @@ def run_pisces_inference(model, **kwargs):
 
     model.inference_method = 'pisces'
     # --- Set Hyperparameters ---
-    # For R pisces function
-    K = int(kwargs['K'])
+    # Number of nodes
+    N = model.n_nodes
+    K_req = int(kwargs['K'])
+    if K_req >= N:
+        K = N - 1
+        print(f"Warning: requested K={K_req} ≥ n_nodes={N}, setting K to {K}.")
+    elif K_req < 1:
+        raise ValueError(f"Invalid K={K_req}; must be between 1 and n_nodes-1={N-1}.")
+    else:
+        K = K_req
     alpha = float(kwargs.get('alpha', 0.1))
     niter = int(kwargs.get('niter', 50)) # Max iterations in R
     tol = float(kwargs.get('tol', 1e-6))
@@ -159,73 +167,83 @@ def run_pisces_inference(model, **kwargs):
     model.learned_community_matrix = None # PISCES doesn't return this
     V_history_r = None
 
-    print(f"Calling R 'pisces' function with K={K}, alpha={alpha}, niter={niter}...")
+    # Call the R 'pisces' function, retrying with smaller K upon eigen failures
+    RRuntimeError = None
     try:
-        # Access the sourced function
-        R_pisces_func = R_robjects.globalenv['pisces']
+        from rpy2.rinterface_lib.embedded import RRuntimeError
+    except ImportError:
+        pass
+    V_history_r = None
+    current_K = K
+    while current_K > 0:
+        try:
+            print(f"Calling R 'pisces' with K={current_K}, alpha={alpha}, niter={niter}...")
+            V_history_r = R_pisces_func(
+                A=r_A_list,
+                K=R_robjects.IntVector([current_K]),
+                alpha=R_robjects.FloatVector([alpha]),
+                niter=R_robjects.IntVector([niter]),
+                tol=R_robjects.FloatVector([tol]),
+                verb=R_robjects.BoolVector([verb])
+            )
+            # If call succeeds, break out
+            K = current_K
+            break
+        except Exception as e:
+            err_msg = str(e)
+            print(f"PISCES R call failed with K={current_K}: {err_msg}")
+            current_K -= 1
+            if current_K <= 0:
+                raise RuntimeError(f"PISCES failed for all K values down to 1.")
+            print(f"Retrying PISCES with reduced K={current_K}...")
 
-        # Call the function - note shared_kmeans_init is removed
-        V_history_r = R_pisces_func(
-            A=r_A_list,
-            K=R_robjects.IntVector([K]),
-            alpha=R_robjects.FloatVector([alpha]),
-            niter=R_robjects.IntVector([niter]),
-            tol=R_robjects.FloatVector([tol]),
-            verb=R_robjects.BoolVector([verb])
-        )
+    # --- Process V_history and perform K-Means in Python ---
+    print("Extracting V history from R list and performing K-Means...")
+    if V_history_r is not None and V_history_r is not R_robjects.NULL and len(V_history_r) > 0:
+        # V_history_r is an R list (iterations) of lists (layers) of matrices (embeddings)
+        num_iters_actual = len(V_history_r)
+        print(f"  R function ran for {num_iters_actual} iterations.")
 
-        # --- Process V_history and perform K-Means in Python ---
-        print("Extracting V history from R list and performing K-Means...")
-        if V_history_r is not None and V_history_r is not R_robjects.NULL and len(V_history_r) > 0:
-            # V_history_r is an R list (iterations) of lists (layers) of matrices (embeddings)
-            num_iters_actual = len(V_history_r)
-            print(f"  R function ran for {num_iters_actual} iterations.")
+        # Check structure of the first iteration's result
+        first_iter_layers = V_history_r[0]
+        if len(first_iter_layers) != T:
+             raise ValueError(f"Mismatch in number of layers returned by R ({len(first_iter_layers)}) and expected ({T})")
 
-            # Check structure of the first iteration's result
-            first_iter_layers = V_history_r[0]
-            if len(first_iter_layers) != T:
-                 raise ValueError(f"Mismatch in number of layers returned by R ({len(first_iter_layers)}) and expected ({T})")
+        # Initialize storage for assignments history
+        learned_assignments_history = np.zeros((N, T, num_iters_actual), dtype=int)
 
-            # Initialize storage for assignments history
-            learned_assignments_history = np.zeros((N, T, num_iters_actual), dtype=int)
+        # Loop through iterations returned by R
+        for iter_idx in range(num_iters_actual):
+            V_iter_r = V_history_r[iter_idx] # R list of matrices for this iteration
+            # Loop through layers
+            for layer_idx in range(T):
+                V_layer_r = V_iter_r[layer_idx] # R matrix
+                # Convert R matrix to numpy array
+                try:
+                    V_layer_np = np.array(V_layer_r)
+                    if V_layer_np.shape[0] != N or V_layer_np.shape[1] != K:
+                         raise ValueError(f"Unexpected shape {V_layer_np.shape} for V matrix at iter {iter_idx+1}, layer {layer_idx+1}. Expected ({N}, {K})")
+                except Exception as convert_err:
+                     print(f"  Error converting V matrix to numpy at iter {iter_idx+1}, layer {layer_idx+1}: {convert_err}")
+                     # Handle error - maybe skip this iter/layer or stop?
+                     # For now, let's fill with a placeholder like -1 and continue, but log error
+                     learned_assignments_history[:, layer_idx, iter_idx] = -1
+                     continue # Skip k-means for this layer/iter
 
-            # Loop through iterations returned by R
-            for iter_idx in range(num_iters_actual):
-                V_iter_r = V_history_r[iter_idx] # R list of matrices for this iteration
-                # Loop through layers
-                for layer_idx in range(T):
-                    V_layer_r = V_iter_r[layer_idx] # R matrix
-                    # Convert R matrix to numpy array
-                    try:
-                        V_layer_np = np.array(V_layer_r)
-                        if V_layer_np.shape[0] != N or V_layer_np.shape[1] != K:
-                             raise ValueError(f"Unexpected shape {V_layer_np.shape} for V matrix at iter {iter_idx+1}, layer {layer_idx+1}. Expected ({N}, {K})")
-                    except Exception as convert_err:
-                         print(f"  Error converting V matrix to numpy at iter {iter_idx+1}, layer {layer_idx+1}: {convert_err}")
-                         # Handle error - maybe skip this iter/layer or stop?
-                         # For now, let's fill with a placeholder like -1 and continue, but log error
-                         learned_assignments_history[:, layer_idx, iter_idx] = -1
-                         continue # Skip k-means for this layer/iter
+                # Perform K-Means
+                try:
+                    kmeans = KMeans(n_clusters=K, n_init=kmeans_n_init, random_state=kmeans_random_state)
+                    labels = kmeans.fit_predict(V_layer_np)
+                    learned_assignments_history[:, layer_idx, iter_idx] = labels # 0-based labels
+                except Exception as kmeans_err:
+                    print(f"  Error during K-Means at iter {iter_idx+1}, layer {layer_idx+1}: {kmeans_err}")
+                    learned_assignments_history[:, layer_idx, iter_idx] = -1 # Error placeholder
 
-                    # Perform K-Means
-                    try:
-                        kmeans = KMeans(n_clusters=K, n_init=kmeans_n_init, random_state=kmeans_random_state)
-                        labels = kmeans.fit_predict(V_layer_np)
-                        learned_assignments_history[:, layer_idx, iter_idx] = labels # 0-based labels
-                    except Exception as kmeans_err:
-                        print(f"  Error during K-Means at iter {iter_idx+1}, layer {layer_idx+1}: {kmeans_err}")
-                        learned_assignments_history[:, layer_idx, iter_idx] = -1 # Error placeholder
+        model.learned_trajectories = learned_assignments_history # Shape (N, T, Iters)
+        print(f"  Stored PISCES trajectory history with shape: {model.learned_trajectories.shape}")
 
-            model.learned_trajectories = learned_assignments_history # Shape (N, T, Iters)
-            print(f"  Stored PISCES trajectory history with shape: {model.learned_trajectories.shape}")
-
-        else:
-            print("  Warning: PISCES R function did not return a valid V history.")
-
-    except Exception as e:
-        print(f"  Error during R 'pisces' execution or result processing: {e}")
-        import traceback
-        traceback.print_exc()
+    else:
+        print("  Warning: PISCES R function did not return a valid V history.")
 
     end_time = time.time()
     print(f"--- PISCES Inference finished in {end_time - start_time:.2f}s ---")

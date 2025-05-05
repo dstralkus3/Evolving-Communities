@@ -96,20 +96,19 @@ class EvolvingCommunityModel:
             hbsm_kwargs.setdefault('Gcap', self.num_communities + 5)
             print(f"  Calling run_hbsm_inference with: {hbsm_kwargs}")
             run_hbsm_inference(self, **hbsm_kwargs)
+
         elif method == 'dpsbm':
-
             run_dpsbm_inference(self, **kwargs)
+
         elif method == 'pisces':
-
             if 'K' not in kwargs:
-                 print("Warning: 'K' not found in kwargs for PISCES, defaulting to self.num_communities")
-                 kwargs['K'] = self.num_communities
-
+                print("Warning: 'K' not found in kwargs for PISCES, defaulting to self.num_communities")
+                kwargs['K'] = self.num_communities if self.num_communities < self.n_nodes else self.n_nodes - 2  
             print(f"  Calling run_pisces_inference with: {kwargs}")
             run_pisces_inference(self, **kwargs)
 
         elif method == 'spectral':
-            print("  Spectral method not implemented yet.")
+            print("Spectral method not implemented yet.")
             pass
 
         else:
@@ -117,7 +116,7 @@ class EvolvingCommunityModel:
 
 if __name__ == "__main__":
 
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(seed=40)
 
     ## PARAMETERS FOR MARKOV MODEL
     n_nodes = 10
@@ -132,5 +131,3 @@ if __name__ == "__main__":
 
     ## GENERATE NETWORKS
     model.generate_markov_network(transition_matrix)
-
-    
