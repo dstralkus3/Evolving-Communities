@@ -94,9 +94,10 @@ if __name__ == "__main__":
         agg_scores = evaluation.aggregate_nmi()
         for m in methods:
             agg_results[m].append(agg_scores.get(m))
+
         # slight pause
         time.sleep(0.5)
-
+    
     # Plot aggregate NMI vs K for each method
     fig, ax = plt.subplots(figsize=(8, 5))
     for m in methods:
