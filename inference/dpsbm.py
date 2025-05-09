@@ -98,24 +98,51 @@ def run_dpsbm_inference(model, **kwargs):
 
         # --- Extract Trajectory (zb_list) ---
         print("Extracting results from R object...")
-        # The structure might be slightly different, check R function's return value
-        # Assuming it returns a list with zb_list directly accessible
+
+        # Initialize dictionaries if missing
+        if not hasattr(model, 'mcmc_sample_history') or model.mcmc_sample_history is None:
+            model.mcmc_sample_history = {}
+        if not hasattr(model, 'learned_trajectories') or model.learned_trajectories is None:
+            model.learned_trajectories = {}
+
         zb_list_r = dpsbm_result_r.rx2('zb_list')
-        if zb_list_r != R_robjects.NULL:
+        if zb_list_r is not R_robjects.NULL:
             num_iters_r = len(zb_list_r)
             num_layers_r = len(zb_list_r[0])
             num_nodes_r = len(zb_list_r[0][0])
             print(f"  Raw zb_list dimensions (iters, layers, nodes): ({num_iters_r}, {num_layers_r}, {num_nodes_r})")
 
             trajectory_raw = np.zeros((num_iters_r, num_layers_r, num_nodes_r), dtype=int)
-            for i in range(num_iters_r):
-                for l in range(num_layers_r):
-                    trajectory_raw[i, l, :] = np.array(zb_list_r[i][l], dtype=int) - 1 # 0-based
+            for iter_idx in range(num_iters_r):
+                iter_list = zb_list_r[iter_idx]
+                for layer_idx in range(num_layers_r):
+                    trajectory_raw[iter_idx, layer_idx, :] = np.array(iter_list[layer_idx], dtype=int) - 1
 
-            model.learned_trajectories = trajectory_raw.transpose(2, 1, 0)
-            print(f"  Stored DP-SBM trajectory with shape: {model.learned_trajectories.shape}")
+            trajectory_np = trajectory_raw.transpose(2, 1, 0)  # (N, T, Iters)
+            model.mcmc_sample_history['dpsbm'] = trajectory_np
+            print(f"  Stored full trajectory in model.mcmc_sample_history['dpsbm'] with shape {trajectory_np.shape}.")
+
+            # --- MAP labels via get_map_labels ---
+            burnin_default = niter // 2
+            burnin = int(kwargs.get('r_get_map_labels_burnin', burnin_default))
+            consecutive = bool(kwargs.get('r_get_map_labels_consecutive', True))
+
+            try:
+                map_res_r = R_hsbm.get_map_labels(zb_list_r,
+                                                  burnin=R_robjects.IntVector([burnin]),
+                                                  consecutive=R_robjects.BoolVector([consecutive]))
+                labels_r = map_res_r.rx2('labels')
+                if labels_r is not R_robjects.NULL:
+                    labels_np = np.array(labels_r, dtype=int) - 1  # (layers, nodes) -> 0-based
+                    labels_np = labels_np.T  # (nodes, layers)
+                    model.learned_trajectories['dpsbm'] = labels_np
+                    print(f"  Stored MAP labels in model.learned_trajectories['dpsbm'] with shape {labels_np.shape}.")
+                else:
+                    print("  Warning: get_map_labels did not return 'labels'.")
+            except Exception as map_err:
+                print(f"  Error calling hsbm::get_map_labels for DP-SBM: {map_err}")
         else:
-            print("  Warning: DP-SBM R result did not contain 'zb_list'. Trajectories not stored.")
+            print("  Warning: DP-SBM R result did not contain 'zb_list'. Trajectory and MAP labels not stored.")
 
     except Exception as e:
         print(f"  Error during R hsbm::fit_mult_dpsbm execution or result extraction: {e}")

@@ -115,33 +115,65 @@ def run_hbsm_inference(model, **kwargs):
         # --- Extract Trajectory (zb_list) ---
         print("Extracting results from R object...")
         zb_list_r = hbsm_result_r.rx2('zb_list')
+
+        # Prepare model dictionaries for storage (initialize if missing)
+        if not hasattr(model, 'mcmc_sample_history') or model.mcmc_sample_history is None:
+            model.mcmc_sample_history = {}
+        if not hasattr(model, 'learned_trajectories') or model.learned_trajectories is None:
+            model.learned_trajectories = {}
+
         if zb_list_r is not R_robjects.NULL:
-            # R list: iterations -> layers -> nodes (1-based)
+            # R list: iterations -> layers -> nodes (1-based indexing)
             num_iters_r = len(zb_list_r)
-            num_layers_r = len(zb_list_r[0]) # Assumes >= 1 iter
-            num_nodes_r = len(zb_list_r[0][0]) # Assumes >= 1 layer
+            num_layers_r = len(zb_list_r[0]) # assumes at least one iteration
+            num_nodes_r = len(zb_list_r[0][0])
             print(f"  Raw zb_list dimensions (iters, layers, nodes): ({num_iters_r}, {num_layers_r}, {num_nodes_r})")
 
             # Convert to numpy array (iters, layers, nodes)
             trajectory_raw = np.zeros((num_iters_r, num_layers_r, num_nodes_r), dtype=int)
-            for i in range(num_iters_r):
-                for l in range(num_layers_r):
-                    trajectory_raw[i, l, :] = np.array(zb_list_r[i][l], dtype=int) - 1 # Convert to 0-based
+            for iter_idx in range(num_iters_r):
+                iter_list = zb_list_r[iter_idx]
+                for layer_idx in range(num_layers_r):
+                    trajectory_raw[iter_idx, layer_idx, :] = np.array(iter_list[layer_idx], dtype=int) - 1  # 0-based
 
-            # Transpose to: (nodes, layers, iterations)
-            model.learned_trajectories = trajectory_raw.transpose(2, 1, 0)
-            print(f"  Stored HBSM trajectory with shape: {model.learned_trajectories.shape}")
+            # Transpose to (nodes, layers, iterations) -> (N, T, Iters)
+            trajectory_np = trajectory_raw.transpose(2, 1, 0)
+            model.mcmc_sample_history['hbsm'] = trajectory_np
+            print(f"  Stored full trajectory in model.mcmc_sample_history['hbsm'] with shape {trajectory_np.shape}.")
+
+            # --- MAP Label Extraction using hsbm::get_map_labels ---
+            burnin_default = niter // 2
+            burnin = int(kwargs.get('r_get_map_labels_burnin', burnin_default))
+            consecutive = bool(kwargs.get('r_get_map_labels_consecutive', True))
+
+            try:
+                map_res_r = R_hsbm.get_map_labels(zb_list_r, 
+                                                  burnin=R_robjects.IntVector([burnin]),
+                                                  consecutive=R_robjects.BoolVector([consecutive]))
+                labels_r = map_res_r.rx2('labels')
+                if labels_r is not R_robjects.NULL:
+                    labels_np = np.array(labels_r, dtype=int) - 1  # (layers, nodes) -> 0-based
+                    labels_np = labels_np.T  # (nodes, layers)
+                    model.learned_trajectories['hbsm'] = labels_np
+                    print(f"  Stored MAP labels in model.learned_trajectories['hbsm'] with shape {labels_np.shape} (nodes x layers).")
+                else:
+                    print("  Warning: get_map_labels did not return 'labels'.")
+            except Exception as map_err:
+                print(f"  Error calling hsbm::get_map_labels: {map_err}")
         else:
-            print("  Warning: HBSM R result did not contain 'zb_list'. Trajectories not stored.")
+            print("  Warning: HBSM R result did not contain 'zb_list'. Trajectory and MAP labels not stored.")
 
         # --- Extract Final Community Matrix (eta) ---
-        final_eta_r = hbsm_result_r.rx2('eta')
-        if final_eta_r is not R_robjects.NULL:
-             final_eta = np.array(final_eta_r)
-             print(f"  Extracted FINAL HBSM community matrix (eta) with shape: {final_eta.shape}")
-             model.learned_community_matrix = final_eta
-        else:
-             print("  Warning: HBSM R result did not return final 'eta'.")
+        try:
+            final_eta_r = hbsm_result_r.rx2('eta')
+            if final_eta_r is not R_robjects.NULL:
+                 final_eta = np.array(final_eta_r)
+                 model.learned_community_matrix = final_eta
+                 print(f"  Extracted FINAL HBSM community matrix (eta) with shape: {final_eta.shape}")
+            else:
+                 print("  Warning: HBSM R result did not return final 'eta'.")
+        except Exception as eta_err:
+            print(f"  Error extracting eta matrix: {eta_err}")
     
     except Exception as e:
         print(f"  Error during R hsbm::fit_hsbm execution or result extraction: {e}")

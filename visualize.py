@@ -12,16 +12,16 @@ class Visualizer():
 
         if self.model.dynamicNetwork is None:
             raise ValueError("Dynamic network is not set. Please generate a dynamic network first.")
-        if self.model.community_assignments is None:
+        if self.model.true_community_assignments is None:
              raise ValueError("True community assignments are not set.")
 
     def plot_true_community_evolution(self, ax):
         """Plots the ground truth community evolution on a given Axes object."""
-        # community_assignments shape is (N, T)
-        N, T = self.model.community_assignments.shape
+        # true_community_assignments shape is (N, T)
+        N, T = self.model.true_community_assignments.shape
         for i in range(N):
             # Plot community of node i across all layers T
-            ax.plot(range(T), self.model.community_assignments[i, :], marker='.', linestyle='-', label=f"Node {i}")
+            ax.plot(range(T), self.model.true_community_assignments[i, :], marker='.', linestyle='-', label=f"Node {i}")
 
         ax.set_title('True Community Evolution')
         ax.set_xlabel('Layer (Time Step)')
@@ -32,84 +32,206 @@ class Visualizer():
              ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 
     def visualize_learned_trajectories(self):
-        """Plots true and learned community evolution side-by-side with an iteration slider."""
-        if self.model.learned_trajectories is None:
-            print("Learned trajectories have not been set. Cannot create comparison plot.")
+        """
+        Plots true community evolution and learned trajectories for multiple methods.
+        Subplots are arranged horizontally (left-to-right).
+        Each method with 3D MCMC/iterative data gets its own iteration slider.
+        """
+        # true_community_assignments existence is guaranteed by __init__
+        
+        methods_to_plot = [] # Stores names of *learned* methods with valid data
+        # Populate methods_to_plot, prioritizing 3D MCMC data then 2D MAP data
+        if hasattr(self.model, 'mcmc_sample_history') and isinstance(self.model.mcmc_sample_history, dict):
+            for key, val in self.model.mcmc_sample_history.items():
+                if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[0] > 0 and val.shape[1] > 0 and val.shape[2] > 0: # N, T, Iters
+                    methods_to_plot.append(key)
+        
+        if hasattr(self.model, 'learned_trajectories') and isinstance(self.model.learned_trajectories, dict):
+            for key, val in self.model.learned_trajectories.items():
+                if isinstance(val, np.ndarray) and val.ndim == 2 and val.shape[0] > 0 and val.shape[1] > 0: # N, T
+                    if key not in methods_to_plot: # Add if not already from MCMC history (or if MCMC was invalid)
+                        methods_to_plot.append(key)
+        
+        if not methods_to_plot and self.model.true_community_assignments is None:
+            print("No true or learned trajectories/MCMC history available to visualize.")
             return
+        if not methods_to_plot and self.model.true_community_assignments is not None:
+            print("No learned trajectories or MCMC history available. Plotting only true communities.")
+            # Fall through to plot only true if no learned methods are found but true exists.
 
-        # learned_trajectories shape is assumed (N, T, Iterations)
-        N, T, Iters = self.model.learned_trajectories.shape
-        if Iters == 0:
-            print("Learned trajectories have 0 iterations. Cannot plot comparison.")
-            return
+        num_learned_methods = len(methods_to_plot)
+        num_cols = 1 + num_learned_methods # 1 for true, others for learned
 
-        fig, axes = plt.subplots(1, 2, figsize=(18, 7), sharey=True)
-        plt.subplots_adjust(bottom=0.2) # Make space for slider
-
-        ax_true = axes[0]
-        ax_learned = axes[1]
-
-        # --- Plot Ground Truth (Left) --- 
-        self.plot_true_community_evolution(ax_true)
-
-        # --- Plot Initial Learned State (Right) --- 
-        initial_assignments = self.model.learned_trajectories[:, :, 0] # Shape (N, T)
-        lines_learned = [] # Store line objects for updating learned plot
-        for i in range(N):
-            line, = ax_learned.plot(range(T), initial_assignments[i, :], marker='.', linestyle='-', label=f"Node {i}")
-            lines_learned.append(line)
-
-        ax_learned.set_title(f'Learned Evolution ({self.model.inference_method or "Unknown"}, Iter 0 / {Iters-1})')
-        ax_learned.set_xlabel('Layer (Time Step)')
-        # ax_learned.set_ylabel('Community ID') # Y label is shared
-        ax_learned.grid(axis='y', linestyle='--', alpha=0.7)
-        # Don't show legend for learned plot if true plot has it or N is large
-        if N <= 15:
-             ax_learned.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-
-        # Determine shared y-axis limits based on all possible communities
-        all_comms_true = np.unique(self.model.community_assignments)
-        all_comms_learned = np.unique(self.model.learned_trajectories)
-        min_comm = min(np.min(all_comms_true) if len(all_comms_true)>0 else 0, 
-                       np.min(all_comms_learned) if len(all_comms_learned)>0 else 0)
-        max_comm = max(np.max(all_comms_true) if len(all_comms_true)>0 else 0, 
-                       np.max(all_comms_learned) if len(all_comms_learned)>0 else 0)
-        ax_true.set_ylim(min_comm - 0.5, max_comm + 0.5)
-        # ax_learned uses the same ylim due to sharey=True
-
-        # Adjust layout to prevent overlap, considering potential legends
-        if N <= 15:
-            # If legends are shown, need more space between plots and for right legend
-             fig.tight_layout(rect=[0, 0.1, 0.9, 0.95], pad=2.0)
+        fig, all_axes_flat = plt.subplots(1, num_cols, figsize=(8 * num_cols, 7), sharey=True) 
+        
+        if num_cols == 0: # Should only happen if true_community_assignments is also None
+             plt.close(fig)
+             return
+        elif num_cols == 1: # Only true plot or one plot total
+            all_axes = [all_axes_flat] 
         else:
-             fig.tight_layout(rect=[0, 0.1, 1, 0.95]) # Rect leaves space for slider
+            all_axes = all_axes_flat
 
-        # --- Slider Setup --- 
-        ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03]) # Centered below plots
-        iteration_slider = Slider(
-            ax=ax_slider,
-            label='Iteration',
-            valmin=0,
-            valmax=Iters - 1,
-            valinit=0,
-            valstep=1,
-            valfmt='%d'
-        )
+        self._slider_refs = [] 
 
-        # --- Update Function --- 
-        def update(val):
-            iteration_index = int(iteration_slider.val)
-            assignments_at_iter = self.model.learned_trajectories[:, :, iteration_index]
-            # Update the y-data for each line in the learned plot
-            for node_idx, line in enumerate(lines_learned):
-                line.set_ydata(assignments_at_iter[node_idx, :])
-            # Update the title of the learned plot
-            ax_learned.set_title(f'Learned Evolution ({self.model.inference_method or "Unknown"}, Iter {iteration_index} / {Iters-1})')
-            fig.canvas.draw_idle()
+        # --- Calculate Global Y-axis Limits ---
+        all_min_c_global, all_max_c_global = [np.inf], [-np.inf] 
+        def update_global_yrange(data_array):
+            if data_array is not None and data_array.size > 0:
+                current_min = np.min(data_array)
+                current_max = np.max(data_array)
+                if current_min < all_min_c_global[0]: all_min_c_global[0] = current_min
+                if current_max > all_max_c_global[0]: all_max_c_global[0] = current_max
+        
+        if self.model.true_community_assignments is not None:
+            update_global_yrange(self.model.true_community_assignments)
 
-        iteration_slider.on_changed(update)
-        self._slider = iteration_slider # Keep reference
+        for method_name_for_yrange in methods_to_plot:
+            data_to_check = None
+            if hasattr(self.model, 'mcmc_sample_history') and method_name_for_yrange in self.model.mcmc_sample_history and \
+               isinstance(self.model.mcmc_sample_history[method_name_for_yrange], np.ndarray) and \
+               self.model.mcmc_sample_history[method_name_for_yrange].ndim == 3:
+                data_to_check = self.model.mcmc_sample_history[method_name_for_yrange]
+            elif hasattr(self.model, 'learned_trajectories') and method_name_for_yrange in self.model.learned_trajectories and \
+                 isinstance(self.model.learned_trajectories[method_name_for_yrange], np.ndarray) and \
+                 self.model.learned_trajectories[method_name_for_yrange].ndim == 2:
+                 data_to_check = self.model.learned_trajectories[method_name_for_yrange]
+            update_global_yrange(data_to_check)
+        
+        min_c_final = 0 if all_min_c_global[0] == np.inf else all_min_c_global[0]
+        max_c_final = 0 if all_max_c_global[0] == -np.inf else all_max_c_global[0]
+        
+        # --- Plot Ground Truth (First Column if true_community_assignments exists) --- 
+        ax_true = all_axes[0]
+        N_ref, T_ref = 0,0 # Reference N, T for learned plots if true is missing
+        
+        if self.model.true_community_assignments is not None:
+            N_ref, T_ref = self.model.true_community_assignments.shape
+            self.plot_true_community_evolution(ax_true)
+            ax_true.set_ylim(min_c_final - 0.5, max_c_final + 0.5 if max_c_final >= min_c_final else min_c_final + 1.5)
+        else: # No true assignments, first plot will be the first learned method
+            ax_true.set_title("True communities not available")
+            ax_true.axis('off') # Hide this axis if no true data
 
+        # --- Plot Each Learned Trajectory ---
+        # If true_community_assignments is None, learned methods start at index 0 of all_axes
+        # Otherwise, they start at index 1.
+        learned_plot_offset = 0 if self.model.true_community_assignments is None else 1
+
+        for i, method_name in enumerate(methods_to_plot):
+            ax_idx = i + learned_plot_offset
+            if ax_idx >= len(all_axes): # Safety check if only true was plotted and methods_to_plot was empty
+                print(f"Warning: Attempting to plot method '{method_name}' but not enough axes available. Skipping.")
+                continue
+            ax_learned = all_axes[ax_idx]
+            
+            trajectory_data_to_plot = None
+            is_3d_data = False
+            num_iters_for_method = 0
+            N_method, T_method = N_ref, T_ref 
+
+            # Check for 3D MCMC/iterative data first
+            if hasattr(self.model, 'mcmc_sample_history') and isinstance(self.model.mcmc_sample_history.get(method_name), np.ndarray) and \
+               self.model.mcmc_sample_history[method_name].ndim == 3:
+                mcmc_data = self.model.mcmc_sample_history[method_name]
+                if mcmc_data.size > 0 and mcmc_data.shape[2] > 0:
+                    trajectory_data_to_plot = mcmc_data
+                    N_method, T_method, num_iters_for_method = trajectory_data_to_plot.shape
+                    is_3d_data = True
+                    print(f"Visualizing 3D data for method '{method_name}' (N={N_method}, T={T_method}, Iters={num_iters_for_method}).")
+                else:
+                    print(f"MCMC/iterative history for '{method_name}' is empty or invalid. Falling back.")
+            
+            # Fallback to 2D MAP data
+            if not is_3d_data:
+                if hasattr(self.model, 'learned_trajectories') and isinstance(self.model.learned_trajectories.get(method_name), np.ndarray) and \
+                   self.model.learned_trajectories[method_name].ndim == 2:
+                    map_data = self.model.learned_trajectories[method_name]
+                    if map_data.size > 0:
+                        trajectory_data_to_plot = map_data
+                        N_method, T_method = trajectory_data_to_plot.shape
+                        num_iters_for_method = 0 # No iterations for 2D data
+                        is_3d_data = False # Explicitly false
+                        print(f"Visualizing 2D MAP trajectory for method '{method_name}' (N={N_method}, T={T_method}).")
+                    else:
+                         print(f"2D MAP trajectory for '{method_name}' is empty.")
+                else:
+                    if not is_3d_data: # only print if no 3D data was found
+                        print(f"No suitable 2D data found for method '{method_name}'.")
+
+            if trajectory_data_to_plot is None:
+                print(f"No valid data found for method '{method_name}'. Skipping plot for this method.")
+                ax_learned.set_title(f'No data for {method_name}')
+                ax_learned.set_xlabel('Layer (Time Step)')
+                ax_learned.set_ylabel('')
+                ax_learned.axis('off')
+                continue
+            
+            if N_method == 0 or T_method == 0:
+                print(f"Error: Node count (N={N_method}) or Layer count (T={T_method}) is zero for method '{method_name}'. Skipping plot.")
+                ax_learned.set_title(f'Invalid data dims for {method_name}')
+                ax_learned.set_xlabel('Layer (Time Step)')
+                ax_learned.set_ylabel('')
+                ax_learned.axis('off')
+                continue
+
+            lines_for_method = []
+            initial_assignments = trajectory_data_to_plot[:, :, 0] if is_3d_data and num_iters_for_method > 0 else trajectory_data_to_plot
+            
+            if initial_assignments.shape[0] != N_method or initial_assignments.shape[1] != T_method:
+                 print(f"Error: Shape mismatch for initial assignments for {method_name}. Expected ({N_method},{T_method}), got {initial_assignments.shape}. Skipping.")
+                 ax_learned.set_title(f'Data shape error for {method_name}')
+                 ax_learned.axis('off')
+                 continue
+
+            for node_idx in range(N_method):
+                line, = ax_learned.plot(range(T_method), initial_assignments[node_idx, :], marker='.', linestyle='-', label=f"Node {node_idx}")
+                lines_for_method.append(line)
+            
+            base_title = f'Learned: {method_name}'
+            current_title = f'{base_title} - Iter 0 / {max(0, num_iters_for_method-1)}' if is_3d_data and num_iters_for_method > 0 else base_title
+            ax_learned.set_title(current_title)
+            ax_learned.set_xlabel('Layer (Time Step)')
+            ax_learned.set_ylabel('') 
+            ax_learned.grid(axis='y', linestyle='--', alpha=0.7)
+            if N_method <= 15:
+                ax_learned.legend(loc='center left', bbox_to_anchor=(1.02, 0.5)) # Adjust legend position slightly
+            
+            # Ensure Y-limits are consistent if this plot is the first one (i.e., no true plot)
+            if learned_plot_offset == 0 and i == 0:
+                 ax_learned.set_ylim(min_c_final - 0.5, max_c_final + 0.5 if max_c_final >= min_c_final else min_c_final + 1.5)
+
+
+            if is_3d_data and num_iters_for_method > 1:
+                bbox = ax_learned.get_position()
+                slider_ax_rect = [bbox.x0 + bbox.width * 0.1, bbox.y0 - 0.12, bbox.width * 0.8, 0.03] # Adjusted y0 for more space
+                
+                ax_slider_method = fig.add_axes(slider_ax_rect)
+                iteration_slider_method = Slider(
+                    ax=ax_slider_method,
+                    label=f'{method_name[:10]} Iter', # Shorten label if too long
+                    valmin=0,
+                    valmax=num_iters_for_method - 1,
+                    valinit=0,
+                    valstep=1,
+                    valfmt='%d'
+                )
+
+                def make_update_func(data, lines, ax, title_base, total_iters_func): # Pass total_iters as a function
+                    def update(val):
+                        iter_idx = int(val) 
+                        assignments = data[:, :, iter_idx]
+                        for node_idx_func, line_obj_func in enumerate(lines):
+                            line_obj_func.set_ydata(assignments[node_idx_func, :])
+                        ax.set_title(f'{title_base} - Iter {iter_idx} / {max(0, total_iters_func-1)}')
+                        fig.canvas.draw_idle()
+                    return update
+                
+                update_func = make_update_func(trajectory_data_to_plot, lines_for_method, ax_learned, base_title, num_iters_for_method)
+                iteration_slider_method.on_changed(update_func)
+                self._slider_refs.append(iteration_slider_method) 
+
+        fig.tight_layout(rect=[0, 0.08 if self._slider_refs else 0.03, 0.95, 0.95]) # Adjust bottom for sliders
         plt.show()
 
     def plot_community_matrix(self, learned: bool = False, ax=None):
@@ -150,7 +272,7 @@ class Visualizer():
         """
         # Extract adjacency tensor and community assignments
         A = self.model.dynamicNetwork  # shape (N, N, T)
-        com = self.model.community_assignments  # shape (N, T)
+        com = self.model.true_community_assignments  # shape (N, T)
         N, _, T = A.shape
 
         # Consistent circular layout
@@ -208,7 +330,7 @@ if __name__ == "__main__":
     initial_distribution = np.ones(num_communities) / num_communities 
  
     model = EvolvingCommunityModel(n_nodes, n_layers, num_communities, community_matrix, initial_distribution)
-    model.generate_markov_network(transition_matrix, seed = seed)
+    model.generate_contracting_network()
  
     ## Learn Model
     model.learn_community_dynamics(method = 'hbsm', niter = 100)
@@ -216,4 +338,4 @@ if __name__ == "__main__":
     ## Visualize
     visualizer = Visualizer(model)
     visualizer.visualize_learned_trajectories()
-    
+    visualizer.display_temporal_network()

@@ -136,11 +136,18 @@ def run_pisces_inference(model, **kwargs):
         print(f"Converted {T} network layers to R list of sparse matrices.")
     except Exception as e:
          print(f"Error converting numpy arrays to R sparse matrices: {e}")
-         model.learned_trajectories = None
+         # Ensure learned_trajectories is a dict before trying to assign None to a key
+         if not hasattr(model, 'learned_trajectories') or model.learned_trajectories is None:
+            model.learned_trajectories = {}
+         model.learned_trajectories['PISCES'] = None # Default key if shared_kmeans_init is not specified
+         model.learned_trajectories['PISCES-SH'] = None 
          model.learned_community_matrix = None
          return
 
-    model.inference_method = 'pisces'
+    # Determine method label for storage
+    method_name_key = 'PISCES-SH' if kwargs.get('shared_kmeans_init', False) else 'PISCES'
+    model.inference_method = method_name_key
+
     # --- Set Hyperparameters ---
     # Number of nodes
     N = model.n_nodes
@@ -163,7 +170,14 @@ def run_pisces_inference(model, **kwargs):
         kmeans_random_state = int(kmeans_random_state)
 
     # --- Call R Function to get V history ---
-    model.learned_trajectories = None # Reset
+    # Initialize dictionaries if they don't exist
+    if not hasattr(model, 'mcmc_sample_history') or model.mcmc_sample_history is None:
+        model.mcmc_sample_history = {}
+    if not hasattr(model, 'learned_trajectories') or model.learned_trajectories is None:
+        model.learned_trajectories = {}
+
+    model.mcmc_sample_history[method_name_key] = None # Reset for this run
+    model.learned_trajectories[method_name_key] = None # Reset for this run
     model.learned_community_matrix = None # PISCES doesn't return this
     V_history_r = None
 
@@ -239,8 +253,18 @@ def run_pisces_inference(model, **kwargs):
                     print(f"  Error during K-Means at iter {iter_idx+1}, layer {layer_idx+1}: {kmeans_err}")
                     learned_assignments_history[:, layer_idx, iter_idx] = -1 # Error placeholder
 
-        model.learned_trajectories = learned_assignments_history # Shape (N, T, Iters)
-        print(f"  Stored PISCES trajectory history with shape: {model.learned_trajectories.shape}")
+        # Store the full 3D history of assignments (N, T, Iterations)
+        model.mcmc_sample_history[method_name_key] = learned_assignments_history
+        print(f"  Stored PISCES full assignment history (N, T, Iterations): {learned_assignments_history.shape} into model.mcmc_sample_history['{method_name_key}']")
+
+        # Store the assignments from the last iteration as the primary learned trajectory
+        if num_iters_actual > 0:
+            final_learned_trajectory = learned_assignments_history[:, :, -1] # Shape (N, T)
+            model.learned_trajectories[method_name_key] = final_learned_trajectory
+            print(f"  Stored PISCES final trajectory (last iteration, N, T): {final_learned_trajectory.shape} into model.learned_trajectories['{method_name_key}']")
+        else:
+            print("  PISCES ran for 0 iterations, no final trajectory to store.")
+            model.learned_trajectories[method_name_key] = None # Ensure it's None if no iterations
 
     else:
         print("  Warning: PISCES R function did not return a valid V history.")
