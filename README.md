@@ -1,4 +1,4 @@
-'''# Dynamic Community Detection Framework
+Finding Community Structure in Dynamic Networks: Final Project for MIT's "Bayesian Modeling and Inference" 6.7830  
 
 Forks from https://github.com/aaamini/hsbm, which is the original code for "Hierarchical Stochastic Block Models for Multiplex Networks"
 
