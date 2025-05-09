@@ -25,3 +25,6 @@ The framework is designed to be extensible, allowing users to easily add new net
     *   The `if __name__ == "__main__":` block provides a demonstration of its capabilities.
            
       
+To run experiments, simply define an instance of the EvolvingCommunityModel, generate a dynamic network on it with one of the network generation methods (or your own), call learn_community_dynamics() on
+the instance with some specified inference model ("hbsm", "dpsbm", "pisces" at present), and use the Visualizer and Evaluation objects to perform ANMI experiments, visualizing learned community evolution 
+during optimization, etc.
